@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Panel
-from .spacer_core import calc_clearance
+
+from .spacer_core import calc_clearance, resolve_diameters
 
 
 class SPACERPRO_PT_panel(Panel):
@@ -14,22 +15,44 @@ class SPACERPRO_PT_panel(Panel):
         layout = self.layout
         props = context.scene.spacerpro_props
 
+        # Main geometry
         box = layout.box()
         box.label(text="Main Geometry")
-        box.prop(props, "od_mm")
-        box.prop(props, "id_mm")
+        box.prop(props, "diameter_mode", expand=True)
+
+        if props.diameter_mode == "OD_ID":
+            box.prop(props, "od_mm")
+            box.prop(props, "id_mm")
+        elif props.diameter_mode == "OD_WALL":
+            box.prop(props, "od_mm")
+            box.prop(props, "wall_mm")
+        elif props.diameter_mode == "ID_WALL":
+            box.prop(props, "id_mm")
+            box.prop(props, "wall_mm")
+
         box.prop(props, "height_mm")
 
+        # Fit / Material
         box = layout.box()
         box.label(text="Fit / Material")
         box.prop(props, "fit_class", expand=True)
         box.prop(props, "material", expand=True)
         box.prop(props, "clearance_offset")
 
+        # Info
         clearance = calc_clearance(props.fit_class, props.material, props.clearance_offset)
-        final_id = props.id_mm + clearance
+        resolved_od, resolved_id = resolve_diameters(
+            props.diameter_mode,
+            props.od_mm,
+            props.id_mm,
+            props.wall_mm,
+        )
+        final_id = resolved_id + clearance
+
         info = layout.box()
         info.label(text="Info")
+        info.label(text=f"Resolved OD: {resolved_od:.2f} mm")
+        info.label(text=f"Resolved ID: {resolved_id:.2f} mm")
         info.label(text=f"Final clearance: {clearance:.2f} mm")
         info.label(text=f"Final ID: {final_id:.2f} mm")
 
@@ -39,9 +62,11 @@ class SPACERPRO_PT_panel(Panel):
 
 classes = (SPACERPRO_PT_panel,)
 
+
 def register():
     for c in classes:
         bpy.utils.register_class(c)
+
 
 def unregister():
     for c in reversed(classes):

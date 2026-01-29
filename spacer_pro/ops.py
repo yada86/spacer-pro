@@ -1,6 +1,11 @@
 import bpy
 from bpy.types import Operator
-from .spacer_core import calc_clearance
+
+from .spacer_core import (
+    calc_clearance,
+    resolve_diameters,
+    build_spacer,
+)
 
 
 class SPACERPRO_OT_generate(Operator):
@@ -11,58 +16,56 @@ class SPACERPRO_OT_generate(Operator):
     def execute(self, context):
         props = context.scene.spacerpro_props
 
-        if props.id_mm >= props.od_mm:
-            self.report({"ERROR"}, "ID must be smaller than OD.")
+        # Resolve OD/ID based on mode (OD+ID / OD+Wall / ID+Wall)
+        resolved_od, resolved_id = resolve_diameters(
+            props.diameter_mode,
+            props.od_mm,
+            props.id_mm,
+            props.wall_mm,
+        )
+
+        # Validation
+        if resolved_id <= 0.0 or resolved_od <= 0.0:
+            self.report({"ERROR"}, "Resolved diameters must be > 0.")
             return {"CANCELLED"}
 
-        clearance = calc_clearance(props.fit_class, props.material, props.clearance_offset)
-        final_id = props.id_mm + clearance
+        if resolved_id >= resolved_od:
+            self.report({"ERROR"}, "Resolved ID must be smaller than OD.")
+            return {"CANCELLED"}
 
-        if final_id >= props.od_mm:
+        # Clearance
+        clearance = calc_clearance(props.fit_class, props.material, props.clearance_offset)
+        final_id = resolved_id + clearance
+
+        if final_id >= resolved_od:
             self.report({"ERROR"}, "Final ID (with clearance) must be smaller than OD.")
             return {"CANCELLED"}
 
-        bpy.ops.mesh.primitive_cylinder_add(
-            radius=props.od_mm * 0.5,
-            depth=props.height_mm,
-            enter_editmode=False,
-            align='WORLD',
-        )
-        outer = context.active_object
-        outer.name = "SpacerPRO_Outer"
+        # Build mesh
+        outer = build_spacer(resolved_od, resolved_id, props.height_mm, clearance)
 
-        bpy.ops.mesh.primitive_cylinder_add(
-            radius=final_id * 0.5,
-            depth=props.height_mm + 0.2,
-            enter_editmode=False,
-            align='WORLD',
-        )
-        inner = context.active_object
-        inner.name = "SpacerPRO_Cutter"
-
-        mod = outer.modifiers.new(name="SPACERPRO_Boolean", type='BOOLEAN')
-        mod.operation = 'DIFFERENCE'
-        mod.object = inner
-        mod.solver = 'MANIFOLD'  # FLOAT/EXACT/MANIFOLD in Blender 5.x
-
-        context.view_layer.objects.active = outer
-        bpy.ops.object.modifier_apply(modifier=mod.name)
-
-        bpy.data.objects.remove(inner, do_unlink=True)
-
+        # Metadata tags (future-proof)
+        outer["SPACERPRO_mode"] = props.diameter_mode
         outer["SPACERPRO_fit"] = props.fit_class
         outer["SPACERPRO_material"] = props.material
         outer["SPACERPRO_clearance"] = float(clearance)
+        outer["SPACERPRO_resolved_od"] = float(resolved_od)
+        outer["SPACERPRO_resolved_id"] = float(resolved_id)
 
-        self.report({"INFO"}, f"Generated spacer. Clearance: {clearance:.2f} mm (ID -> {final_id:.2f} mm)")
+        self.report(
+            {"INFO"},
+            f"Generated spacer. OD {resolved_od:.2f} / ID {resolved_id:.2f} -> Final ID {final_id:.2f} (clr {clearance:.2f})"
+        )
         return {"FINISHED"}
 
 
 classes = (SPACERPRO_OT_generate,)
 
+
 def register():
     for c in classes:
         bpy.utils.register_class(c)
+
 
 def unregister():
     for c in reversed(classes):
