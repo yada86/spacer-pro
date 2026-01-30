@@ -3,4 +3,6 @@ __pycache__/
 *.pyo
 *.pyd
 Thumbs.db
-.DS_Store
+.DS_Storespacer_pro/presets/
+*.blend
+*.blend1
