@@ -8,6 +8,7 @@ import json
 
 ADDON_ID = "spacer_pro"
 PRESET_DIRNAME = "presets"
+MASTER_PRESET_NAME = "MASTER"
 
 
 def _preset_root_dir() -> Path:
@@ -33,6 +34,24 @@ def _preset_path(preset_name: str) -> Path:
     return _preset_root_dir() / f"{safe}.json"
 
 
+def _save_preset(preset_name: str, settings: dict) -> None:
+    path = _preset_path(preset_name)
+    payload = {
+        "name": preset_name,
+        "addon": ADDON_ID,
+        "blender": bpy.app.version_string,
+        "settings": settings or {},
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_preset(preset_name: str) -> dict:
+    path = _preset_path(preset_name)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    settings = payload.get("settings", {})
+    return settings if isinstance(settings, dict) else {}
+
+
 def _list_presets() -> list[str]:
     root = _preset_root_dir()
     names = [p.stem for p in root.glob("*.json")]
@@ -42,6 +61,25 @@ def _list_presets() -> list[str]:
 
 def _get_props(scene):
     return getattr(scene, "spacerpro_props", None)
+
+
+def _ensure_master_exists():
+    try:
+        path = _preset_path(MASTER_PRESET_NAME)
+        if path.exists():
+            return
+    except Exception:
+        pass
+
+    try:
+        sc = bpy.context.scene
+        props = _get_props(sc)
+        if not props:
+            return
+        data = _pg_to_dict(props)
+        _save_preset(MASTER_PRESET_NAME, data)
+    except Exception:
+        pass
 
 
 def _pg_to_dict(pg) -> dict:
@@ -216,6 +254,28 @@ class SPACERPRO_OT_PresetDelete(Operator):
         return {"FINISHED"}
 
 
+class SPACERPRO_OT_PresetRestoreMaster(Operator):
+    bl_idname = "spacerpro.preset_restore_master"
+    bl_label = "Restore MASTER Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        _ensure_master_exists()
+
+        try:
+            data = _load_preset(MASTER_PRESET_NAME)
+            props = _get_props(context.scene)
+            if not props:
+                self.report({"ERROR"}, "Spacer PRO props missing")
+                return {"CANCELLED"}
+            _dict_to_pg(data, props)
+        except Exception:
+            return {"CANCELLED"}
+
+        self.report({"INFO"}, "Restored MASTER preset")
+        return {"FINISHED"}
+
+
 def draw_presets_ui(layout, context):
     sc = context.scene
     st = getattr(sc, "spacerpro_preset_state", None)
@@ -249,6 +309,7 @@ _classes = (
     SPACERPRO_OT_PresetApply,
     SPACERPRO_OT_PresetSave,
     SPACERPRO_OT_PresetDelete,
+    SPACERPRO_OT_PresetRestoreMaster,
 )
 
 def register():
