@@ -76,10 +76,14 @@ def _dict_to_pg(data: dict, pg):
 
 
 def _enum_presets_items(self, context):
-    names = _list_presets()
-    if not names:
-        return [("NONE", "None", "No presets found")]
-    return [(n, n, f"Preset: {n}") for n in names]
+    try:
+        names = _list_presets() or []
+    except Exception:
+        names = []
+    items = [("NONE", "None", "No preset selected")]
+    items.extend([(n, n, f"Preset: {n}") for n in names])
+    return items
+
 
 
 class SPACERPRO_PresetState(PropertyGroup):
@@ -253,13 +257,11 @@ def register():
 
     bpy.types.Scene.spacerpro_preset_state = PointerProperty(type=SPACERPRO_PresetState)
 
-    try:
-        sc = bpy.context.scene
-        st = sc.spacerpro_preset_state
-        names = _list_presets()
-        st.preset = names[0] if names else "NONE"
-    except Exception:
-        pass
+    # Lazy init happens in UI / operators instead.
+    # (Avoid touching bpy.context.scene during register; unstable on reload/startup.)
+    return
+
+
 
 def unregister():
     if hasattr(bpy.types.Scene, "spacerpro_preset_state"):
