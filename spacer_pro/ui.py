@@ -1,99 +1,117 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import bpy
 from bpy.types import Panel
+from . import presets
 
-from .spacer_core import calc_clearance, resolve_diameters
+
+def _error_box(layout, text):
+    box = layout.box()
+    row = box.row()
+    row.alert = True
+    row.label(text=text, icon="ERROR")
+    return box
 
 
-class SPACERPRO_PT_panel(Panel):
+def _ops_ok():
+    try:
+        need = ("generate", "update", "preset_apply", "preset_save", "preset_delete")
+        return all(hasattr(bpy.ops.spacerpro, n) for n in need)
+    except Exception:
+        return False
+
+
+class SPACERPRO_PT_Main(Panel):
     bl_label = "Spacer PRO"
-    bl_idname = "SPACERPRO_PT_panel"
+    bl_idname = "SPACERPRO_PT_main"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "Spacer PRO"
 
     def draw(self, context):
         layout = self.layout
-        props = context.scene.spacerpro_props
-        pstate = context.scene.spacerpro_preset_state
+        sc = context.scene
+        props = getattr(sc, "spacerpro_props", None)
 
-        # -------------------------
-        # Presets (compact)
-        # -------------------------
+        if not props:
+            _error_box(layout, "spacerpro_props missing (register issue)")
+            return
+
+        # Small dev reload icon (only in Advanced mode)
+        top = layout.row()
+        top.alignment = "RIGHT"
+        if getattr(props, "show_advanced", False) and hasattr(bpy.ops.spacerpro, "reload_scripts"):
+            top.operator("spacerpro.reload_scripts", text="", icon="FILE_REFRESH")
+
+        # Dimensions
         box = layout.box()
-        box.label(text="Presets")
+        box.label(text="Dimensions")
+        col = box.column(align=True)
+        col.prop(props, "inner_diameter", text="Inner Diameter")
+        col.prop(props, "outer_diameter", text="Outer Diameter")
+        col.prop(props, "height", text="Height")
 
-        row = box.row(align=True)
-        row.prop(pstate, "preset_name", text="")
-        row.operator("spacerpro.preset_apply", text="Apply")
-
-        row = box.row(align=True)
-        row.prop(pstate, "preset_name_new", text="")
-        boxrow = box.row(align=True)
-        boxrow.operator("spacerpro.preset_save", text="Save").overwrite = False
-        boxrow.operator("spacerpro.preset_save", text="Overwrite").overwrite = True
-        boxrow.operator("spacerpro.preset_delete", text="Delete")
-
-        # -------------------------
-        # Main Geometry
-        # -------------------------
+        # Chamfers (UI-ready)
         box = layout.box()
-        box.label(text="Main Geometry")
-        box.prop(props, "diameter_mode", expand=True)
+        box.label(text="Chamfers")
+        box.prop(props, "chamfer_enable", text="Chamfer")
+        if props.chamfer_enable:
+            row = box.row(align=True)
+            row.prop(props, "chamfer_side", expand=True)
+            row = box.row(align=True)
+            row.prop(props, "chamfer_region", expand=True)
+            row = box.row(align=True)
+            row.prop(props, "chamfer_size", text="Size")
+            row.prop(props, "chamfer_angle_deg", text="Angle")
 
-        if props.diameter_mode == "OD_ID":
-            box.prop(props, "od_mm")
-            box.prop(props, "id_mm")
-        elif props.diameter_mode == "OD_WALL":
-            box.prop(props, "od_mm")
-            box.prop(props, "wall_mm")
-        elif props.diameter_mode == "ID_WALL":
-            box.prop(props, "id_mm")
-            box.prop(props, "wall_mm")
-
-        box.prop(props, "height_mm")
-
-        # -------------------------
-        # Fit / Material (dropdowns)
-        # -------------------------
+        # Taper (UI-ready)
         box = layout.box()
-        box.label(text="Fit / Material")
+        box.label(text="Taper")
+        box.prop(props, "taper_enable", text="Taper")
+        if props.taper_enable:
+            row = box.row(align=True)
+            row.prop(props, "taper_side", expand=True)
+            row = box.row(align=True)
+            row.prop(props, "taper_region", expand=True)
+            row = box.row(align=True)
+            row.prop(props, "taper_mode", expand=True)
+            if props.taper_mode == "ANGLE":
+                box.prop(props, "taper_angle_deg", text="Angle")
+            else:
+                box.prop(props, "taper_height", text="Height")
 
-        # dropdowns: DO NOT use expand=True here
-        box.prop(props, "fit_class", text="Fit")
-        box.prop(props, "material", text="Material")
-        box.prop(props, "clearance_offset")
+        # Presets (truth-based)
+        if not _ops_ok() or not getattr(sc, "spacerpro_preset_state", None):
+            _error_box(layout, "Presets unavailable (register issue)")
+        else:
+            presets.draw_presets_ui(layout, context)
 
-        # -------------------------
-        # Info
-        # -------------------------
-        clearance = calc_clearance(props.fit_class, props.material, props.clearance_offset)
-        resolved_od, resolved_id = resolve_diameters(
-            props.diameter_mode,
-            props.od_mm,
-            props.id_mm,
-            props.wall_mm,
-        )
-        final_id = resolved_id + clearance
+        # PRO WORKFLOW BUTTONS
+        row = layout.row(align=True)
+        row.scale_y = 1.35
+        row.operator("spacerpro.generate", text="Create Spacer", icon="ADD")
+        row.operator("spacerpro.update", text="Update", icon="FILE_REFRESH")
 
-        info = layout.box()
-        info.label(text="Info")
-        info.label(text=f"Resolved OD: {resolved_od:.2f} mm")
-        info.label(text=f"Resolved ID: {resolved_id:.2f} mm")
-        info.label(text=f"Final clearance: {clearance:.2f} mm")
-        info.label(text=f"Final ID: {final_id:.2f} mm")
+        # Advanced toggle
+        layout.prop(props, "show_advanced", text="Advanced", toggle=True)
 
-        layout.separator()
-        layout.operator("spacerpro.generate", icon="MESH_CYLINDER")
+        if props.show_advanced:
+            box = layout.box()
+            box.label(text="Advanced")
+            box.prop(props, "debug_mode", text="Debug")
+            last_obj = getattr(sc, "spacerpro_last_object", None)
+            box.label(text=f"Last: {last_obj.name if last_obj else 'None'}", icon="OBJECT_DATA")
 
 
-classes = (SPACERPRO_PT_panel,)
-
+_classes = (SPACERPRO_PT_Main,)
 
 def register():
-    for c in classes:
+    for c in _classes:
         bpy.utils.register_class(c)
 
-
 def unregister():
-    for c in reversed(classes):
-        bpy.utils.unregister_class(c)
+    for c in reversed(_classes):
+        try:
+            bpy.utils.unregister_class(c)
+        except Exception:
+            pass
