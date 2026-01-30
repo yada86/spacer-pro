@@ -2,6 +2,7 @@
 
 import bpy
 import bmesh
+from math import radians, tan
 from bpy.types import PropertyGroup
 from bpy.props import (
     BoolProperty,
@@ -12,10 +13,102 @@ from bpy.props import (
 
 ADDON_TAG = "SPACERPRO"
 
+# Corner keys (fixed order)
+CORNERS = ("TI", "TO", "BI", "BO")
 
-# ----------------------------
-# Properties (Scene.spacerpro_props)
-# ----------------------------
+CORNER_LABEL = {
+    "TI": "Top Inner",
+    "TO": "Top Outer",
+    "BI": "Bottom Inner",
+    "BO": "Bottom Outer",
+}
+
+# Mapping -> (side, region)
+CORNER_MAP = {
+    "TI": ("TOP", "INNER"),
+    "TO": ("TOP", "OUTER"),
+    "BI": ("BOTTOM", "INNER"),
+    "BO": ("BOTTOM", "OUTER"),
+}
+
+# Properties per corner: (enable, size, angle)
+CORNER_PROPS = {
+    "TI": ("ch_ti_on", "ch_ti_size", "ch_ti_angle"),
+    "TO": ("ch_to_on", "ch_to_size", "ch_to_angle"),
+    "BI": ("ch_bi_on", "ch_bi_size", "ch_bi_angle"),
+    "BO": ("ch_bo_on", "ch_bo_size", "ch_bo_angle"),
+}
+
+
+def _first_enabled_corner(props):
+    for c in CORNERS:
+        on_prop, _, _ = CORNER_PROPS[c]
+        if getattr(props, on_prop, False):
+            return c
+    return "TI"
+
+
+def _active_corner_valid(props):
+    active = getattr(props, "chamfer_active_corner", "TI")
+    on_prop, _, _ = CORNER_PROPS.get(active, CORNER_PROPS["TI"])
+    if getattr(props, on_prop, False):
+        return active
+    # move to first enabled
+    new_active = _first_enabled_corner(props)
+    props.chamfer_active_corner = new_active
+    return new_active
+
+
+def _push_master_to_enabled(props):
+    """Copy master values -> every enabled corner."""
+    ms = float(props.chamfer_master_size)
+    ma = float(props.chamfer_master_angle)
+    for c in CORNERS:
+        on_prop, sz_prop, an_prop = CORNER_PROPS[c]
+        if getattr(props, on_prop, False):
+            setattr(props, sz_prop, ms)
+            setattr(props, an_prop, ma)
+
+
+def _pull_master_from_active(props):
+    """Copy active corner values -> master fields."""
+    active = _active_corner_valid(props)
+    _, sz_prop, an_prop = CORNER_PROPS[active]
+    props.chamfer_master_size = float(getattr(props, sz_prop, 0.0))
+    props.chamfer_master_angle = float(getattr(props, an_prop, 45.0))
+
+
+def _on_edit_mode_update(self, context):
+    # When switching to LINKED: master <- active, then master -> all enabled
+    if self.edit_mode == "LINKED":
+        _pull_master_from_active(self)
+        _push_master_to_enabled(self)
+    else:
+        _active_corner_valid(self)
+
+
+def _on_active_corner_update(self, context):
+    # In LINKED mode: master should follow active corner (source)
+    if self.edit_mode == "LINKED":
+        _pull_master_from_active(self)
+        _push_master_to_enabled(self)
+    else:
+        _active_corner_valid(self)
+
+
+def _on_corner_toggle_update(self, context):
+    # Keep active corner valid if user disables it
+    _active_corner_valid(self)
+    # In LINKED mode, new enabled corners should get master values immediately
+    if self.edit_mode == "LINKED":
+        _push_master_to_enabled(self)
+
+
+def _on_master_update(self, context):
+    # In LINKED mode: editing master pushes to enabled corners
+    if self.edit_mode == "LINKED":
+        _push_master_to_enabled(self)
+
 
 class SPACERPRO_Props(PropertyGroup):
     # Dimensions
@@ -41,68 +134,83 @@ class SPACERPRO_Props(PropertyGroup):
         unit="LENGTH",
     )
 
-    # Chamfer controls (UI-ready)
+    # Chamfer global
     chamfer_enable: BoolProperty(name="Chamfer", default=True)
-    chamfer_side: bpy.props.EnumProperty(
-        name="Side",
-        items=[("TOP", "Top", ""), ("BOTTOM", "Bottom", "")],
-        default="BOTTOM",
+
+    edit_mode: EnumProperty(
+        name="Edit Mode",
+        items=[
+            ("INDIVIDUAL", "Individual", "Edit only the active corner"),
+            ("LINKED", "Linked", "Edit master values applied to all enabled corners"),
+        ],
+        default="INDIVIDUAL",
+        update=_on_edit_mode_update,
     )
-    chamfer_region: bpy.props.EnumProperty(
-        name="Region",
-        items=[("INNER", "Inner", ""), ("OUTER", "Outer", "")],
-        default="INNER",
+
+    chamfer_active_corner: EnumProperty(
+        name="Active Corner",
+        items=[
+            ("TI", "Top Inner", ""),
+            ("TO", "Top Outer", ""),
+            ("BI", "Bottom Inner", ""),
+            ("BO", "Bottom Outer", ""),
+        ],
+        default="BI",
+        update=_on_active_corner_update,
     )
-    chamfer_size: FloatProperty(
+
+    # Master values (used in LINKED mode)
+    chamfer_master_size: FloatProperty(
         name="Size",
         default=1.0,
         min=0.0,
         subtype="DISTANCE",
         unit="LENGTH",
+        update=_on_master_update,
     )
-    chamfer_angle_deg: FloatProperty(
+    chamfer_master_angle: FloatProperty(
         name="Angle",
         default=45.0,
         min=1.0,
         max=89.0,
-        subtype="ANGLE",
-        unit="ROTATION",
-        description="UI angle in degrees (geometry hook later)",
+        update=_on_master_update,
     )
 
-    # Taper controls (UI-ready)
+    # Per-corner existence + values
+    ch_ti_on: BoolProperty(name="Top Inner", default=False, update=_on_corner_toggle_update)
+    ch_to_on: BoolProperty(name="Top Outer", default=False, update=_on_corner_toggle_update)
+    ch_bi_on: BoolProperty(name="Bottom Inner", default=True, update=_on_corner_toggle_update)
+    ch_bo_on: BoolProperty(name="Bottom Outer", default=True, update=_on_corner_toggle_update)
+
+    ch_ti_size: FloatProperty(name="Size", default=1.0, min=0.0, subtype="DISTANCE", unit="LENGTH")
+    ch_to_size: FloatProperty(name="Size", default=1.0, min=0.0, subtype="DISTANCE", unit="LENGTH")
+    ch_bi_size: FloatProperty(name="Size", default=1.0, min=0.0, subtype="DISTANCE", unit="LENGTH")
+    ch_bo_size: FloatProperty(name="Size", default=1.0, min=0.0, subtype="DISTANCE", unit="LENGTH")
+
+    ch_ti_angle: FloatProperty(name="Angle", default=45.0, min=1.0, max=89.0)
+    ch_to_angle: FloatProperty(name="Angle", default=45.0, min=1.0, max=89.0)
+    ch_bi_angle: FloatProperty(name="Angle", default=45.0, min=1.0, max=89.0)
+    ch_bo_angle: FloatProperty(name="Angle", default=45.0, min=1.0, max=89.0)
+
+    # Taper (UI placeholder for later)
     taper_enable: BoolProperty(name="Taper", default=False)
-    taper_side: bpy.props.EnumProperty(
+    taper_side: EnumProperty(
         name="Side",
         items=[("TOP", "Top", ""), ("BOTTOM", "Bottom", "")],
         default="TOP",
     )
-    taper_region: bpy.props.EnumProperty(
+    taper_region: EnumProperty(
         name="Region",
         items=[("INNER", "Inner", ""), ("OUTER", "Outer", "")],
         default="INNER",
     )
-    taper_mode: bpy.props.EnumProperty(
+    taper_mode: EnumProperty(
         name="Mode",
         items=[("ANGLE", "Angle", ""), ("HEIGHT", "Height", "")],
         default="ANGLE",
     )
-    taper_angle_deg: FloatProperty(
-        name="Angle",
-        default=30.0,
-        min=0.0,
-        max=85.0,
-        subtype="ANGLE",
-        unit="ROTATION",
-        description="UI angle in degrees (geometry hook later)",
-    )
-    taper_height: FloatProperty(
-        name="Height",
-        default=2.0,
-        min=0.0,
-        subtype="DISTANCE",
-        unit="LENGTH",
-    )
+    taper_angle_deg: FloatProperty(name="Angle", default=30.0, min=0.0, max=85.0)
+    taper_height: FloatProperty(name="Height", default=2.0, min=0.0, subtype="DISTANCE", unit="LENGTH")
 
     # Advanced/dev
     show_advanced: BoolProperty(name="Advanced", default=False)
@@ -110,7 +218,7 @@ class SPACERPRO_Props(PropertyGroup):
 
 
 # ----------------------------
-# Core geometry (MANIFOLD ring)
+# Geometry (manifold ring + chamfer)
 # ----------------------------
 
 def _safe_dims(props):
@@ -123,7 +231,6 @@ def _safe_dims(props):
 
 
 def _copy_bmesh_into(dst: bmesh.types.BMesh, src: bmesh.types.BMesh):
-    """Copy verts/faces from src into dst. Returns list of newly created faces."""
     vmap = {}
     for v in src.verts:
         vmap[v] = dst.verts.new(v.co)
@@ -138,10 +245,6 @@ def _copy_bmesh_into(dst: bmesh.types.BMesh, src: bmesh.types.BMesh):
 
 
 def _boundary_edges_at_z(bm: bmesh.types.BMesh, z_target: float, eps: float):
-    """
-    Return boundary edges (edges with 1 linked face) whose BOTH verts are near z_target.
-    Works well for open cylinder rims.
-    """
     edges = []
     for e in bm.edges:
         if len(e.link_faces) != 1:
@@ -154,18 +257,11 @@ def _boundary_edges_at_z(bm: bmesh.types.BMesh, z_target: float, eps: float):
 
 
 def build_ring_bmesh(inner_d, outer_d, height, segments=128) -> bmesh.types.BMesh:
-    """
-    Build a single, closed, manifold ring:
-      - outer tube (no caps)
-      - inner tube (no caps)
-      - bridge top rim outer<->inner
-      - bridge bottom rim outer<->inner
-    """
     bm = bmesh.new()
     half_h = height * 0.5
     eps = max(1e-6, height * 1e-4)
 
-    # Outer tube (no caps)
+    # Outer tube
     bmesh.ops.create_cone(
         bm,
         cap_ends=False,
@@ -174,9 +270,8 @@ def build_ring_bmesh(inner_d, outer_d, height, segments=128) -> bmesh.types.BMes
         radius2=outer_d * 0.5,
         depth=height,
     )
-    bm.normal_update()
 
-    # Inner tube (no caps) in a temp bmesh, then copy in
+    # Inner tube copied in + reversed
     bm_inner = bmesh.new()
     bmesh.ops.create_cone(
         bm_inner,
@@ -186,45 +281,121 @@ def build_ring_bmesh(inner_d, outer_d, height, segments=128) -> bmesh.types.BMes
         radius2=inner_d * 0.5,
         depth=height,
     )
-    new_inner_faces = _copy_bmesh_into(bm, bm_inner)
+    inner_faces = _copy_bmesh_into(bm, bm_inner)
     bm_inner.free()
 
-    # Flip inner faces so normals point inward (important for consistent manifold)
     try:
-        bmesh.ops.reverse_faces(bm, faces=new_inner_faces)
+        bmesh.ops.reverse_faces(bm, faces=inner_faces)
     except Exception:
         pass
 
     bm.normal_update()
 
-    # Find boundary rims
-    top_z = +half_h
-    bot_z = -half_h
+    # Bridge rims (top + bottom) => manifold ring
+    top_edges = _boundary_edges_at_z(bm, +half_h, eps)
+    bot_edges = _boundary_edges_at_z(bm, -half_h, eps)
 
-    top_edges = _boundary_edges_at_z(bm, top_z, eps)
-    bot_edges = _boundary_edges_at_z(bm, bot_z, eps)
-
-    if not top_edges or not bot_edges:
-        # Fallback: if eps is too tight (shouldn't happen), widen it a bit
-        top_edges = _boundary_edges_at_z(bm, top_z, eps * 10.0)
-        bot_edges = _boundary_edges_at_z(bm, bot_z, eps * 10.0)
-
-    # Bridge top and bottom between the two loops (outer+inner are both in the list)
-    # bridge_loops will connect two edge loops when given edges from both loops.
     if top_edges:
         bmesh.ops.bridge_loops(bm, edges=top_edges)
     if bot_edges:
         bmesh.ops.bridge_loops(bm, edges=bot_edges)
 
-    # Clean up
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
     return bm
 
 
+def _edges_at_corner(bm, side: str, region: str, height: float, inner_r: float, outer_r: float):
+    half_h = height * 0.5
+    z_target = half_h if side == "TOP" else -half_h
+    r_target = inner_r if region == "INNER" else outer_r
+
+    eps_z = max(1e-6, height * 0.001)
+    eps_r = max(1e-6, (outer_r - inner_r) * 0.01)
+
+    edges = []
+    for e in bm.edges:
+        z_avg = (e.verts[0].co.z + e.verts[1].co.z) * 0.5
+        if abs(z_avg - z_target) > eps_z:
+            continue
+
+        r1 = (e.verts[0].co.x**2 + e.verts[0].co.y**2) ** 0.5
+        r2 = (e.verts[1].co.x**2 + e.verts[1].co.y**2) ** 0.5
+        r_avg = (r1 + r2) * 0.5
+
+        if abs(r_avg - r_target) <= eps_r:
+            edges.append(e)
+
+    return edges
+
+
+def _apply_chamfer_corner(bm, side: str, region: str, size: float, angle_deg: float,
+                          height: float, inner_d: float, outer_d: float):
+    if size <= 0.0:
+        return
+
+    inner_r = inner_d * 0.5
+    outer_r = outer_d * 0.5
+
+    edges = _edges_at_corner(bm, side, region, height, inner_r, outer_r)
+    if not edges:
+        return
+
+    res = bmesh.ops.bevel(
+        bm,
+        geom=edges,
+        offset=size,
+        offset_type='OFFSET',
+        segments=1,
+        profile=0.5,
+        affect='EDGES',
+        clamp_overlap=True,
+    )
+
+    new_verts = res.get("verts", [])
+    if not new_verts:
+        return
+
+    # Visible/usable angle control (approx but stable)
+    a = max(1.0, min(89.0, float(angle_deg)))
+    factor = tan(radians(a))  # tan(45)=1 => factor 1.0 at 45°
+
+    half_h = height * 0.5
+    z_ref = half_h if side == "TOP" else -half_h
+    band = max(0.001, size * 2.5)
+
+    for v in new_verts:
+        z = v.co.z
+        if side == "TOP":
+            if not (z_ref - band <= z <= z_ref + 1e-6):
+                continue
+            d = (z_ref - z)
+            v.co.z = z_ref - d * factor
+        else:
+            if not (z_ref - 1e-6 <= z <= z_ref + band):
+                continue
+            d = (z - z_ref)
+            v.co.z = z_ref + d * factor
+
+
+def _apply_chamfers(bm, props, inner_d, outer_d, height):
+    if not props.chamfer_enable:
+        return
+
+    # Always apply to ALL enabled corners.
+    for c in CORNERS:
+        on_prop, sz_prop, an_prop = CORNER_PROPS[c]
+        if not getattr(props, on_prop, False):
+            continue
+
+        side, region = CORNER_MAP[c]
+        size = float(getattr(props, sz_prop, 0.0))
+        ang = float(getattr(props, an_prop, 45.0))
+        _apply_chamfer_corner(bm, side, region, size, ang, height, inner_d, outer_d)
+
+
 def replace_object_mesh(obj: bpy.types.Object, bm: bmesh.types.BMesh, mesh_name="SpacerPRO_Mesh"):
-    # Ensure the OBJECT is a mesh object
     if obj.type != "MESH":
         obj.data = bpy.data.meshes.new(mesh_name)
 
@@ -258,7 +429,20 @@ def is_spacer_object(obj: bpy.types.Object) -> bool:
 
 def rebuild_spacer_object(obj: bpy.types.Object, props):
     inner_d, outer_d, height = _safe_dims(props)
+
+    # Safety: keep active valid; in LINKED keep master pushed
+    _active_corner_valid(props)
+    if props.edit_mode == "LINKED":
+        _push_master_to_enabled(props)
+
     bm = build_ring_bmesh(inner_d, outer_d, height)
+
+    # Apply features
+    _apply_chamfers(bm, props, inner_d, outer_d, height)
+
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
     replace_object_mesh(obj, bm)
     tag_spacer_object(obj)
 
