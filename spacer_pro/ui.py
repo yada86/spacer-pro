@@ -268,6 +268,11 @@ class SPACERPRO_PT_Presets(Panel):
             presets.draw_presets_ui(layout, context)
         except Exception as e:
             _error_box(layout, f"Presets UI error: {e}")
+            return
+
+        row = layout.row(align=True)
+        row.operator("spacerpro.preset_restore_master", icon="LOOP_BACK", text="")
+        row.operator("spacerpro.preset_set_master", icon="FILE_TICK", text="")
 
 
 _classes = (

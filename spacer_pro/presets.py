@@ -185,6 +185,10 @@ class SPACERPRO_OT_PresetSave(Operator):
             self.report({"ERROR"}, "Preset name is empty")
             return {"CANCELLED"}
 
+        if name == MASTER_PRESET_NAME:
+            self.report({'WARNING'}, "MASTER is locked (use Set MASTER to update).")
+            return {"CANCELLED"}
+
         path = _preset_path(name)
         if path.exists() and not self.overwrite:
             self.report({"ERROR"}, "Preset exists. Use Overwrite.")
@@ -223,6 +227,9 @@ class SPACERPRO_OT_PresetDelete(Operator):
     def execute(self, context):
         sc = context.scene
         st = getattr(sc, "spacerpro_preset_state", None)
+        if st and getattr(st, "preset", "NONE") == MASTER_PRESET_NAME:
+            self.report({'WARNING'}, "MASTER is locked (cannot delete).")
+            return {"CANCELLED"}
         if not st:
             self.report({"ERROR"}, "Preset state missing")
             return {"CANCELLED"}
@@ -276,6 +283,28 @@ class SPACERPRO_OT_PresetRestoreMaster(Operator):
         return {"FINISHED"}
 
 
+class SPACERPRO_OT_PresetSetMaster(bpy.types.Operator):
+    bl_idname = "spacerpro.preset_set_master"
+    bl_label = "Set MASTER Preset"
+    bl_description = "Overwrite MASTER preset with current settings (recovery baseline)"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        try:
+            sc = context.scene
+            props = _get_props(sc)
+            if not props:
+                return {'CANCELLED'}
+            data = _pg_to_dict(props)
+            _save_preset(MASTER_PRESET_NAME, data)
+        except Exception:
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
 def draw_presets_ui(layout, context):
     sc = context.scene
     st = getattr(sc, "spacerpro_preset_state", None)
@@ -310,6 +339,7 @@ _classes = (
     SPACERPRO_OT_PresetSave,
     SPACERPRO_OT_PresetDelete,
     SPACERPRO_OT_PresetRestoreMaster,
+    SPACERPRO_OT_PresetSetMaster,
 )
 
 def register():
