@@ -11,6 +11,7 @@ class SPACERPRO_OT_SetActiveCorner(Operator):
     """Set active edit target corner for Chamfer/Taper"""
     bl_idname = "spacerpro.set_active_corner"
     bl_label = "Set Active Corner"
+    bl_description = "Select the active chamfer/taper corner for editing."
     bl_options = {"INTERNAL"}
 
     corner: StringProperty()
@@ -31,6 +32,7 @@ class SPACERPRO_OT_SetActiveCorner(Operator):
 class SPACERPRO_OT_Generate(Operator):
     bl_idname = "spacerpro.generate"
     bl_label = "Create Spacer"
+    bl_description = "Create a new Spacer PRO object from current settings."
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -49,6 +51,7 @@ class SPACERPRO_OT_Generate(Operator):
 class SPACERPRO_OT_Update(Operator):
     bl_idname = "spacerpro.update"
     bl_label = "Update"
+    bl_description = "Rebuild the last Spacer PRO object with current settings."
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
