@@ -165,6 +165,8 @@ class SPACERPRO_OT_PresetApply(Operator):
         return {"FINISHED"}
 
 
+# DEPRECATED: Replaced by Save As New + Update Current (UX V2)
+# Kept for backward compatibility with older .blend files and scripts.
 class SPACERPRO_OT_PresetSave(Operator):
     bl_idname = "spacerpro.preset_save"
     bl_label = "Save Preset"
@@ -173,6 +175,7 @@ class SPACERPRO_OT_PresetSave(Operator):
     overwrite: BoolProperty(name="Overwrite", default=False)
 
     def execute(self, context):
+        self.report({'INFO'}, "Preset Save is deprecated. Use Save As New or Update Current.")
         sc = context.scene
         st = getattr(sc, "spacerpro_preset_state", None)
         props = _get_props(sc)
@@ -305,6 +308,80 @@ class SPACERPRO_OT_PresetSetMaster(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class SPACERPRO_OT_PresetSaveAsNew(bpy.types.Operator):
+    bl_idname = "spacerpro.preset_save_as_new"
+    bl_label = "Save As New"
+    bl_description = "Save current settings as a new preset"
+
+    def execute(self, context):
+        try:
+            sc = context.scene
+            props = _get_props(sc)
+            if not props:
+                return {'CANCELLED'}
+
+            st = getattr(sc, "spacerpro_preset_state", None)
+            if not st:
+                return {'CANCELLED'}
+
+            name = _sanitize_name((st.new_name or "").strip())
+            if not name:
+                self.report({'WARNING'}, "Enter a preset name.")
+                return {'CANCELLED'}
+
+            if name == MASTER_PRESET_NAME:
+                self.report({'WARNING'}, "MASTER is locked (use Set MASTER to update).")
+                return {'CANCELLED'}
+
+            data = _pg_to_dict(props)
+            _save_preset(name, data)
+
+            # Update dropdown to new preset
+            try:
+                st.preset = name
+            except Exception:
+                pass
+
+        except Exception:
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
+class SPACERPRO_OT_PresetUpdateCurrent(bpy.types.Operator):
+    bl_idname = "spacerpro.preset_update_current"
+    bl_label = "Update Current"
+    bl_description = "Overwrite the currently selected preset (except MASTER)"
+
+    def execute(self, context):
+        try:
+            sc = context.scene
+            props = _get_props(sc)
+            if not props:
+                return {'CANCELLED'}
+
+            st = getattr(sc, "spacerpro_preset_state", None)
+            if not st:
+                return {'CANCELLED'}
+
+            name = getattr(st, "preset", "NONE")
+            if name in {"NONE", "", None}:
+                self.report({'WARNING'}, "No preset selected.")
+                return {'CANCELLED'}
+
+            if name == MASTER_PRESET_NAME:
+                self.report({'WARNING'}, "MASTER is locked (use Set MASTER to update).")
+                return {'CANCELLED'}
+
+            data = _pg_to_dict(props)
+            _save_preset(name, data)
+
+        except Exception:
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
 def draw_presets_ui(layout, context):
     sc = context.scene
     st = getattr(sc, "spacerpro_preset_state", None)
@@ -324,12 +401,12 @@ def draw_presets_ui(layout, context):
 
     row = box.row(align=True)
     row.prop(st, "new_name", text="")
-    op = row.operator("spacerpro.preset_save", text="Save", icon="FILE_TICK")
-    op.overwrite = False
 
     row = box.row(align=True)
-    op2 = row.operator("spacerpro.preset_save", text="Overwrite", icon="FILE_REFRESH")
-    op2.overwrite = True
+    row.operator("spacerpro.preset_save_as_new", icon="ADD", text="Save As New")
+    row.operator("spacerpro.preset_update_current", icon="FILE_TICK", text="Update Current")
+
+    row = box.row(align=True)
     row.operator("spacerpro.preset_delete", text="Delete", icon="TRASH")
 
 
@@ -340,6 +417,8 @@ _classes = (
     SPACERPRO_OT_PresetDelete,
     SPACERPRO_OT_PresetRestoreMaster,
     SPACERPRO_OT_PresetSetMaster,
+    SPACERPRO_OT_PresetSaveAsNew,
+    SPACERPRO_OT_PresetUpdateCurrent,
 )
 
 def register():
