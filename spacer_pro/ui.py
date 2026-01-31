@@ -1,12 +1,35 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import bpy
-from bpy.types import Panel
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
+
+try:
+    import bpy  # type: ignore
+    from bpy.types import Panel as _BlenderPanel  # type: ignore
+
+    Panel = cast(Any, _BlenderPanel)
+except Exception:
+    bpy = cast(Any, None)  # type: ignore
+
+    class Panel:  # type: ignore
+        layout: Any
+        pass
+
+if TYPE_CHECKING:
+    # Only for editor/type-checking. Blender provides bpy at runtime.
+    import bpy as _bpy  # type: ignore
+    from bpy.types import Context, UILayout  # type: ignore
 
 try:
     from . import presets
 except Exception:
     presets = None
+
+try:
+    from . import validation
+except Exception:
+    validation = None
 
 
 CORNERS = ("TI", "TO", "BI", "BO")
@@ -115,6 +138,9 @@ class SPACERPRO_PT_Dimensions(Panel):
         col.prop(props, "outer_diameter", text="Outer Diameter")
         col.prop(props, "height", text="Height")
 
+        if validation is not None:
+            validation.draw_validation_box(layout, props, scope="dimensions", title="QA — Dimensions")
+
 
 class SPACERPRO_PT_Chamfers(Panel):
     bl_label = "Chamfers"
@@ -174,6 +200,19 @@ class SPACERPRO_PT_Chamfers(Panel):
                 col2.enabled = False
                 col2.prop(props, sz_prop, text="Size")
                 col2.prop(props, an_prop, text="Angle")
+
+            if validation is not None:
+                if c == "TI":
+                    validation.draw_param_validation(col2, props, scope="chamfers", code_prefix="CH_TI_", title="Top Inner — QA")
+                elif c == "TO":
+                    validation.draw_param_validation(col2, props, scope="chamfers", code_prefix="CH_TO_", title="Top Outer — QA")
+                elif c == "BI":
+                    validation.draw_param_validation(col2, props, scope="chamfers", code_prefix="CH_BI_", title="Bottom Inner — QA")
+                elif c == "BO":
+                    validation.draw_param_validation(col2, props, scope="chamfers", code_prefix="CH_BO_", title="Bottom Outer — QA")
+
+        if validation is not None:
+            validation.draw_validation_box(layout, props, scope="chamfers", title="QA — Chamfers")
 
 
 class SPACERPRO_PT_Taper(Panel):
@@ -249,6 +288,20 @@ class SPACERPRO_PT_Taper(Panel):
                 else:
                     col2.prop(props, ang_prop, text="Angle")
 
+            if validation is not None:
+                qa = cb.column(align=True)
+                qa.enabled = True
+                validation.draw_param_validation(
+                    qa,
+                    props,
+                    scope="taper",
+                    code_prefix=f"TP_{c}_",
+                    title=f"{CORNER_LABEL[c]} — QA",
+                )
+
+        if validation is not None:
+            validation.draw_validation_box(layout, props, scope="taper", title="QA — Taper")
+
 
 class SPACERPRO_PT_Presets(Panel):
     bl_label = "Presets"
@@ -269,6 +322,11 @@ class SPACERPRO_PT_Presets(Panel):
         except Exception as e:
             _error_box(layout, f"Presets UI error: {e}")
             return
+
+        if validation is not None:
+            props = getattr(context.scene, "spacerpro_props", None)
+            if props:
+                validation.draw_validation_box(layout, props, scope="presets", title="QA — Presets")
 
         row = layout.row(align=True)
         row.operator("spacerpro.preset_restore_master", icon="LOOP_BACK", text="")
